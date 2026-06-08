@@ -1,3 +1,5 @@
+from app.api import alerts
+from app.api import scenarios
 from app.api import spider
 from app.api import radar
 from fastapi import FastAPI
@@ -23,6 +25,8 @@ app.add_middleware(
 app.include_router(kml.router, prefix="/api/kml", tags=["KML Engine"])
 app.include_router(radar.router, prefix="/api/radar", tags=["Radar Simulator"])
 app.include_router(spider.router, prefix="/api/spider", tags=["SPIDER Network"])
+app.include_router(scenarios.router, prefix="/api/scenarios", tags=["Scenarios"])
+app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
 @app.get("/")
 async def root():
     return {"message": "SimCore API is running"}

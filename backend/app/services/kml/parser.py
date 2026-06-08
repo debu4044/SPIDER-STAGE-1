@@ -1,49 +1,57 @@
-from fastkml import kml
+import xml.etree.ElementTree as ET
 from shapely.geometry import Polygon
 from sqlalchemy.orm import Session
 from app.models.all_models import KMLZone
 
-def parse_and_save_kml(file_contents: bytes, filename: str, db: Session):
-    """Parses a KML file, extracts polygons, and saves them to PostGIS."""
-    k = kml.KML()
-    k.from_string(file_contents)
+def parse_and_save_kml(kml_content: bytes, filename: str, db: Session):
+    """
+    Parses raw KML/XML content, extracts polygons, and saves to PostGIS.
+    Bypasses library strictness by using raw native ElementTree parsing.
+    """
+    # Parse the raw XML
+    root = ET.fromstring(kml_content)
     
-    zones_added = []
-    
-    def get_features(obj):
-        """Safely extracts features whether they are a method or a property."""
-        f = getattr(obj, 'features', [])
-        return f() if callable(f) else f
+    # Strip restrictive XML namespaces to make tag searching bulletproof
+    for elem in root.iter():
+        if '}' in elem.tag:
+            elem.tag = elem.tag.split('}', 1)[1]
 
-    def extract_polygons(feature):
-        polygons = []
-        # Check if the feature has geometry
-        if getattr(feature, 'geometry', None):
-            geom = feature.geometry
-            if geom.geom_type == 'Polygon':
-                polygons.append((feature.name, geom))
-        
-        # Recursively check for nested folders/features
-        for sub_feature in get_features(feature):
-            polygons.extend(extract_polygons(sub_feature))
-        return polygons
-
-    # The main KML document is usually the first feature
-    all_polygons = []
-    for f in get_features(k):
-        all_polygons.extend(extract_polygons(f))
+    zones = []
     
-    for name, poly in all_polygons:
-        # Convert shapely polygon to Extended Well-Known Text (EWKT) for PostGIS
-        wkt_poly = f"SRID=4326;{poly.wkt}"
-        zone_name = name if name else f"Zone_{filename}"
+    # KML files hold their data inside <Placemark> tags
+    for placemark in root.findall('.//Placemark'):
+        name_tag = placemark.find('name')
+        # If the Placemark doesn't have a name, use the filename
+        zone_name = name_tag.text if name_tag is not None else filename.split('.')[0]
         
-        # Check if zone name already exists to prevent duplication crashes
-        existing = db.query(KMLZone).filter(KMLZone.zone_name == zone_name).first()
-        if not existing:
-            new_zone = KMLZone(zone_name=zone_name, polygon_coordinates=wkt_poly)
-            db.add(new_zone)
-            zones_added.append(new_zone)
+        coords_tag = placemark.find('.//coordinates')
+        if coords_tag is not None:
+            # Clean up the raw text block of coordinates
+            raw_coords = coords_tag.text.strip().split()
             
+            # Format is typically: lon,lat,altitude
+            points = []
+            for point in raw_coords:
+                parts = point.split(',')
+                if len(parts) >= 2:
+                    lon, lat = float(parts[0]), float(parts[1])
+                    points.append((lon, lat))
+            
+            # A valid polygon needs at least 3 points
+            if len(points) >= 3:
+                poly = Polygon(points)
+                # Convert mathematically to PostGIS Well-Known Text (WKT)
+                wkt_poly = f"SRID=4326;{poly.wkt}"
+                
+                # Check if this zone already exists to update it, or create new
+                existing_zone = db.query(KMLZone).filter(KMLZone.zone_name == zone_name).first()
+                if existing_zone:
+                    existing_zone.polygon_coordinates = wkt_poly
+                    zones.append(existing_zone)
+                else:
+                    new_zone = KMLZone(zone_name=zone_name, polygon_coordinates=wkt_poly)
+                    db.add(new_zone)
+                    zones.append(new_zone)
+    
     db.commit()
-    return zones_added
+    return zones

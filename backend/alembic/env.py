@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # 2. Import Base and ALL Models
 from app.database import Base
-from app.models.all_models import RadarEvent, KMLZone, SpiderTransmission, SystemLog
+from app.models.all_models import Base, KMLZone, KMLExport, Sensor, ScenarioDefinition, ScenarioExecution, AlertTemplate, RadarEvent, SpiderDeliveryLog
 
 # 3. Bind the metadata ONCE
 target_metadata = Base.metadata
